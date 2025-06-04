@@ -27,11 +27,25 @@ class Net(L.LightningModule):
         return self.model(x)
 
     def configure_optimizers(self):
-        optimizer = instantiate(self.optimizer, self.parameters(), lr=self.lr)
+        # Handle both Hydra config and direct class instantiation
+        if hasattr(self.optimizer, '_target_'):
+            # Hydra configuration object
+            optimizer = instantiate(self.optimizer, self.parameters(), lr=self.lr)
+        else:
+            # Direct class instantiation
+            optimizer = self.optimizer(self.parameters(), lr=self.lr)
+            
         if self.scheduler:
+            if hasattr(self.scheduler, '_target_'):
+                # Hydra configuration object
+                scheduler = instantiate(self.scheduler, optimizer=optimizer)
+            else:
+                # Direct class instantiation
+                scheduler = self.scheduler(optimizer, T_max=100)  # Default T_max for CosineAnnealingLR
+                
             return {
                 "optimizer": optimizer,
-                "lr_scheduler": instantiate(self.scheduler, optimizer=optimizer),
+                "lr_scheduler": scheduler,
                 "monitor": "val_loss",
             }
         return optimizer
