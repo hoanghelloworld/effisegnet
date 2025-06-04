@@ -44,7 +44,7 @@ class Net(L.LightningModule):
                 scheduler = self.scheduler(optimizer)
             else:
                 # Direct class instantiation
-                scheduler = self.scheduler(optimizer, T_max=100)  # Default T_max for CosineAnnealingLR
+                scheduler = self.scheduler(optimizer)
                 
             return {
                 "optimizer": optimizer,
@@ -103,40 +103,41 @@ class Net(L.LightningModule):
 
         preds = (torch.sigmoid(logits) > 0.5).long()
         self.get_dice(preds, y)
+        self.get_iou(preds, y)
+        self.get_recall(preds, y)
+        self.get_precision(preds, y)
+
+        return loss
 
     def on_validation_epoch_end(self):
-        dice = self.get_dice.aggregate().item()        self.get_iou(preds, y)
+        dice = self.get_dice.aggregate().item()
         iou = self.get_iou.aggregate().item()
         recall = self.get_recall.aggregate()[0].item()
         precision = self.get_precision.aggregate()[0].item()
 
         self.log("val_dice", dice)
-        self.log("val_iou", iou)    def on_validation_epoch_end(self):
-        self.log("val_recall", recall)gate().item()
-        self.log("val_precision", precision)gate().item()
-        self.log("val_f1", 2 * (precision * recall) / (precision + recall + 1e-8))gate()[0].item()
-gate()[0].item()
+        self.log("val_iou", iou)
+        self.log("val_recall", recall)
+        self.log("val_precision", precision)
+        self.log("val_f1", 2 * (precision * recall) / (precision + recall + 1e-8))
+
         self.get_dice.reset()
-        self.get_iou.reset()        self.log("val_dice", dice)
-        self.get_recall.reset()ou)
-        self.get_precision.reset()", recall)
-    ", precision)
-    def on_test_epoch_end(self):ecision * recall) / (precision + recall + 1e-8))
+        self.get_iou.reset()
+        self.get_recall.reset()
+        self.get_precision.reset()
+    
+    def on_test_epoch_end(self):
         dice = self.get_dice.aggregate().item()
         iou = self.get_iou.aggregate().item()
         recall = self.get_recall.aggregate()[0].item()
         precision = self.get_precision.aggregate()[0].item()
 
         self.log("test_dice", dice)
-        self.log("test_iou", iou)    def on_test_epoch_end(self):
-        self.log("test_recall", recall)ate().item()
-        self.log("test_precision", precision)ate().item()
-        self.log("test_f1", 2 * (precision * recall) / (precision + recall + 1e-8))ate()[0].item()
-ate()[0].item()
-        self.get_dice.reset()
-        self.get_iou.reset()        self.log("test_dice", dice)
-        self.get_recall.reset()iou)
-        self.get_precision.reset()l", recall)
+        self.log("test_iou", iou)
+        self.log("test_recall", recall)
+        self.log("test_precision", precision)
+        self.log("test_f1", 2 * (precision * recall) / (precision + recall + 1e-8))
+
         self.get_dice.reset()
         self.get_iou.reset()
         self.get_recall.reset()
