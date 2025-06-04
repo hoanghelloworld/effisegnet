@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from monai.networks.nets import EfficientNetBNFeatures
 from monai.networks.nets.efficientnet import get_efficientnet_image_size
+import torchvision.models as models
 
 
 class GhostModule(nn.Module):
@@ -67,33 +68,44 @@ class EffiSegNetBN(nn.Module):
     ):
         super(EffiSegNetBN, self).__init__()
         self.model_name = model_name
-        self.encoder = EfficientNetBNFeatures(
-            model_name=model_name,
-            pretrained=pretrained,
-        )
 
-        # remove unused layers
-        del self.encoder._avg_pooling
-        del self.encoder._dropout
-        del self.encoder._fc
+        # Check if using EfficientNet V2
+        if model_name == "efficientnet_v2_s":
+            self.encoder = models.efficientnet_v2_s(pretrained=pretrained)
+            # Remove classifier layers
+            self.encoder.classifier = nn.Identity()
+            self.encoder.avgpool = nn.Identity()
 
-        # extract the last number from the model name, example: efficientnet-b0 -> 0
-        b = int(model_name[-1])
+            # EfficientNet V2-S channel configuration
+            channels_per_output = (24, 48, 64, 160, 1280)
+        else:
+            self.encoder = EfficientNetBNFeatures(
+                model_name=model_name,
+                pretrained=pretrained,
+            )
 
-        num_channels_per_output = [
-            (16, 24, 40, 112, 320),
-            (16, 24, 40, 112, 320),
-            (16, 24, 48, 120, 352),
-            (24, 32, 48, 136, 384),
-            (24, 32, 56, 160, 448),
-            (24, 40, 64, 176, 512),
-            (32, 40, 72, 200, 576),
-            (32, 48, 80, 224, 640),
-            (32, 56, 88, 248, 704),
-            (72, 104, 176, 480, 1376),
-        ]
+            # remove unused layers
+            del self.encoder._avg_pooling
+            del self.encoder._dropout
+            del self.encoder._fc
 
-        channels_per_output = num_channels_per_output[b]
+            # extract the last number from the model name, example: efficientnet-b0 -> 0
+            b = int(model_name[-1])
+
+            num_channels_per_output = [
+                (16, 24, 40, 112, 320),
+                (16, 24, 40, 112, 320),
+                (16, 24, 48, 120, 352),
+                (24, 32, 48, 136, 384),
+                (24, 32, 56, 160, 448),
+                (24, 40, 64, 176, 512),
+                (32, 40, 72, 200, 576),
+                (32, 48, 80, 224, 640),
+                (32, 56, 88, 248, 704),
+                (72, 104, 176, 480, 1376),
+            ]
+
+            channels_per_output = num_channels_per_output[b]
 
         if freeze_encoder:
             for param in self.encoder.parameters():
@@ -101,7 +113,12 @@ class EffiSegNetBN(nn.Module):
 
         self.deep_supervision = deep_supervision
 
-        upsampled_size = get_efficientnet_image_size(model_name)
+        # Set image size based on model
+        if model_name == "efficientnet_v2_s":
+            upsampled_size = (384, 384)  # EfficientNet V2-S default size
+        else:
+            upsampled_size = get_efficientnet_image_size(model_name)
+
         self.up1 = nn.Upsample(size=upsampled_size, mode="nearest")
         self.up2 = nn.Upsample(size=upsampled_size, mode="nearest")
         self.up3 = nn.Upsample(size=upsampled_size, mode="nearest")
@@ -164,7 +181,21 @@ class EffiSegNetBN(nn.Module):
         self.conv6 = nn.Conv2d(ch, 1, kernel_size=1, stride=1, padding=0, bias=False)
 
     def forward(self, x):
-        x0, x1, x2, x3, x4 = self.encoder(x)
+        if self.model_name == "efficientnet_v2_s":
+            # Custom forward for EfficientNet V2-S
+            features = []
+            x = self.encoder.features[0](x)  # stem
+            features.append(x)
+
+            # Extract features from different stages
+            for i, stage in enumerate(self.encoder.features[1:], 1):
+                x = stage(x)
+                if i in [1, 2, 4, 6]:  # Key feature extraction points
+                    features.append(x)
+
+            x0, x1, x2, x3, x4 = features
+        else:
+            x0, x1, x2, x3, x4 = self.encoder(x)
 
         x0 = self.conv1(x0)
         x0 = self.relu(x0)

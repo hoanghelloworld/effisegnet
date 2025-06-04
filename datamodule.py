@@ -1,54 +1,64 @@
 import os
+import glob
 
 import albumentations as A
 import cv2
 import lightning as L
 from albumentations.pytorch import ToTensorV2
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 
 
-class KvasirSEGDatagen(Dataset):
-    def __init__(self, pairs, transform=None):
+class CustomSegDatagen(Dataset):
+    def __init__(self, image_paths, mask_paths=None, transform=None, is_test=False):
+        self.image_paths = image_paths
+        self.mask_paths = mask_paths
         self.transform = transform
-        self.pairs = pairs
+        self.is_test = is_test
 
     def __len__(self):
-        return len(self.pairs)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        image = cv2.imread(self.pairs[idx][0])
+        image = cv2.imread(self.image_paths[idx])
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mask = cv2.imread(self.pairs[idx][1], 0)
-        mask = cv2.threshold(mask, 127, 1, cv2.THRESH_BINARY)[1]
+        
+        if not self.is_test:
+            mask = cv2.imread(self.mask_paths[idx], 0)
+            mask = cv2.threshold(mask, 127, 1, cv2.THRESH_BINARY)[1]
 
-        if self.transform is not None:
-            transformed = self.transform(image=image, mask=mask)
-            image = transformed["image"]
-            mask = transformed["mask"]
+            if self.transform is not None:
+                transformed = self.transform(image=image, mask=mask)
+                image = transformed["image"]
+                mask = transformed["mask"]
 
-        return image, mask.long().unsqueeze(0)
+            return image, mask.long().unsqueeze(0)
+        else:
+            # Test mode - no masks
+            if self.transform is not None:
+                transformed = self.transform(image=image)
+                image = transformed["image"]
+            
+            return image, self.image_paths[idx]  # Return image and path for saving predictions
 
 
-class KvasirSEGDataset(L.LightningDataModule):
+class CustomSegDataset(L.LightningDataModule):
     def __init__(
         self,
-        batch_size=64,
-        root_dir="./Kvasir-SEG",
+        batch_size=8,
+        root_dir="./data",
         num_workers=2,
-        train_val_ratio=0.8,
-        img_size=(224, 224),
+        img_size=(384, 384),
     ):
         super().__init__()
         self.batch_size = batch_size
         self.root_dir = root_dir
         self.num_workers = num_workers
-        self.train_val_ratio = train_val_ratio
         self.img_size = img_size
 
     def get_train_transforms(self):
         return A.Compose(
             [
-                A.Resize(*(self.img_size, self.img_size), interpolation=cv2.INTER_LANCZOS4),
+                A.Resize(*self.img_size, interpolation=cv2.INTER_LANCZOS4),
                 A.HorizontalFlip(p=0.5),
                 A.VerticalFlip(p=0.5),
                 A.ColorJitter(
@@ -74,7 +84,7 @@ class KvasirSEGDataset(L.LightningDataModule):
     def get_val_transforms(self):
         return A.Compose(
             [
-                A.Resize(*(self.img_size, self.img_size), interpolation=cv2.INTER_LANCZOS4),
+                A.Resize(*self.img_size, interpolation=cv2.INTER_LANCZOS4),
                 A.Normalize(
                     mean=(0.485, 0.456, 0.406),
                     std=(0.229, 0.224, 0.225),
@@ -87,7 +97,7 @@ class KvasirSEGDataset(L.LightningDataModule):
     def get_test_transforms(self):
         return A.Compose(
             [
-                A.Resize(*(self.img_size, self.img_size), interpolation=cv2.INTER_LANCZOS4),
+                A.Resize(*self.img_size, interpolation=cv2.INTER_LANCZOS4),
                 A.Normalize(
                     mean=(0.485, 0.456, 0.406),
                     std=(0.229, 0.224, 0.225),
@@ -98,30 +108,26 @@ class KvasirSEGDataset(L.LightningDataModule):
         )
 
     def setup(self, stage=None):
-        train_images = os.listdir(os.path.join(self.root_dir, "train/images"))
-        train_masks = os.listdir(os.path.join(self.root_dir, "train/masks"))
-        train_images = [os.path.join(self.root_dir, "train/images", img) for img in train_images]
-        train_masks = [os.path.join(self.root_dir, "train/masks", mask) for mask in train_masks]
+        # Load train data
+        train_images = sorted(glob.glob(os.path.join(self.root_dir, "Train/Image/*.jpg")))
+        train_masks = sorted(glob.glob(os.path.join(self.root_dir, "Train/Mask/*.png")))
 
-        val_images = os.listdir(os.path.join(self.root_dir, "validation/images"))
-        val_masks = os.listdir(os.path.join(self.root_dir, "validation/masks"))
-        val_images = [os.path.join(self.root_dir, "validation/images", img) for img in val_images]
-        val_masks = [os.path.join(self.root_dir, "validation/masks", mask) for mask in val_masks]
+        # Load validation data
+        val_images = sorted(glob.glob(os.path.join(self.root_dir, "Val/Image/*.jpg")))
+        val_masks = sorted(glob.glob(os.path.join(self.root_dir, "Val/Mask/*.png")))
 
-        test_images = os.listdir(os.path.join(self.root_dir, "test/images"))
-        test_masks = os.listdir(os.path.join(self.root_dir, "test/masks"))
-        test_images = [os.path.join(self.root_dir, "test/images", img) for img in test_images]
-        test_masks = [os.path.join(self.root_dir, "test/masks", mask) for mask in test_masks]
+        # Load test data (no masks)
+        test_images = sorted(glob.glob(os.path.join(self.root_dir, "Test/Image/*.jpg")))
 
-        train_pairs = list(zip(train_images, train_masks))
-        val_pairs = list(zip(val_images, val_masks))
-        test_pairs = list(zip(test_images, test_masks))
-
-        self.train_set = KvasirSEGDatagen(
-            train_pairs, transform=self.get_train_transforms()
+        self.train_set = CustomSegDatagen(
+            train_images, train_masks, transform=self.get_train_transforms()
         )
-        self.val_set = KvasirSEGDatagen(val_pairs, transform=self.get_val_transforms())
-        self.test_set = KvasirSEGDatagen(test_pairs, transform=self.get_test_transforms())
+        self.val_set = CustomSegDatagen(
+            val_images, val_masks, transform=self.get_val_transforms()
+        )
+        self.test_set = CustomSegDatagen(
+            test_images, None, transform=self.get_test_transforms(), is_test=True
+        )
 
     def train_dataloader(self):
         return DataLoader(

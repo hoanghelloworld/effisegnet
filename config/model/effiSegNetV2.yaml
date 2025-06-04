@@ -1,0 +1,8 @@
+name: effiSegNetV2
+object:
+  _target_: models.effisegnet.EffiSegNetBN
+  ch: ${ch}
+  pretrained: ${pretrained}
+  freeze_encoder: ${freeze_encoder}
+  deep_supervision: ${deep_supervision}
+  model_name: efficientnet_v2_s
